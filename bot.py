@@ -68,6 +68,10 @@ async def query_ollama(messages: list) -> str:
         }
         async with session.post(OLLAMA_URL, json=payload) as resp:
             data = await resp.json()
+            logger.debug(f"Ollama raw response: {data}")
+            if "message" not in data:
+                logger.error(f"Unexpected Ollama response structure: {data}")
+                raise ValueError(f"Unexpected response: {data}")
             response = data["message"]["content"]
             logger.info(f"Ollama response received ({len(response)} chars)")
             return response
