@@ -20,6 +20,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 MODEL = os.getenv("OLLAMA_MODEL")
 OLLAMA_URL = "http://localhost:11434/api/chat"
 PERSONALITIES_FILE = Path(__file__).parent / "personalities.json"
+SERVER_PROMPT_FILE = Path(__file__).parent / "server_prompt.txt"
 PREFIX = "/"
 MAX_HISTORY = 60
 
@@ -31,6 +32,16 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
 channel_histories: dict[int, list] = {}
 active_personalities: dict[int, str] = {}
+
+def load_server_prompt() -> str:
+    if SERVER_PROMPT_FILE.exists():
+        prompt = SERVER_PROMPT_FILE.read_text(encoding="utf-8").strip()
+        logger.info(f"Server prompt loaded ({len(prompt)} chars)")
+        return prompt
+    logger.info("No server_prompt.txt found, skipping")
+    return ""
+
+SERVER_PROMPT = load_server_prompt()
 
 
 # Personnalities
@@ -53,7 +64,10 @@ personalities = load_personalities()
 
 def get_system_prompt(guild_id: int) -> str:
     name = active_personalities.get(guild_id, "default")
-    return personalities.get(name, personalities["default"])
+    personality = personalities.get(name, personalities["default"])
+    if SERVER_PROMPT:
+        return f"{SERVER_PROMPT}\n\n{personality}"
+    return personality
 
 
 # Ollama
