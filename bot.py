@@ -92,7 +92,8 @@ def add_to_history(channel_id: int, role: str, content: str):
 
 @bot.event
 async def on_ready():
-    logger.info(f"Connected as {bot.user} (ID: {bot.user.id})")
+    await bot.tree.sync()
+    logger.info(f"Connected as {bot.user} (ID: {bot.user.id}), slash commands synced")
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -133,42 +134,47 @@ async def on_message(message: discord.Message):
 
 # Commands
 
-@bot.command(name="add_personality")
-@commands.has_permissions(manage_guild=True)
-async def add_personality(ctx: commands.Context, name: str, *, prompt: str):
-    """Create or modify a personality. Usage : !add_personality <name> <prompt>"""
-    logger.info(f"{ctx.author} added/updated personality '{name}' in guild {ctx.guild.id}")
+@bot.tree.command(name="add_personality", description="Create or modify a personality")
+@discord.app_commands.describe(name="Personality name", prompt="System prompt for this personality")
+@discord.app_commands.checks.has_permissions(manage_guild=True)
+async def add_personality(interaction: discord.Interaction, name: str, prompt: str):
+    logger.info(f"{interaction.user} added/updated personality '{name}' in guild {interaction.guild_id}")
     personalities[name] = prompt
     save_personalities(personalities)
-    await ctx.send(f"Personality `{name}` saved.")
+    await interaction.response.send_message(f"Personality `{name}` saved.")
 
-@bot.command(name="use_personality")
-async def use_personality(ctx: commands.Context, name: str):
-    """Activate a personality on this server. Usage : !use_personality <name>"""
+@bot.tree.command(name="use_personality", description="Activate a personality on this server")
+@discord.app_commands.describe(name="Personality name to activate")
+async def use_personality(interaction: discord.Interaction, name: str):
     if name not in personalities:
-        logger.warning(f"{ctx.author} tried unknown personality '{name}' in guild {ctx.guild.id}")
-        liste = ", ".join(f"`{k}`" for k in personalities.keys())
-        await ctx.send(f"Personality not found. Available : {liste}")
+        logger.warning(f"{interaction.user} tried unknown personality '{name}' in guild {interaction.guild_id}")
+        await interaction.response.send_message(f"Unknown personality `{name}`.", ephemeral=True)
         return
-    active_personalities[ctx.guild.id] = name
-    logger.info(f"{ctx.author} activated personality '{name}' in guild {ctx.guild.id}")
-    await ctx.send(f"Personality `{name}` activated.")
+    active_personalities[interaction.guild_id] = name
+    logger.info(f"{interaction.user} activated personality '{name}' in guild {interaction.guild_id}")
+    await interaction.response.send_message(f"Personality `{name}` activated.")
 
-@bot.command(name="list_personalities")
-async def list_personalities(ctx: commands.Context):
-    """List available personalities."""
-    current = active_personalities.get(ctx.guild.id, "default")
+@use_personality.autocomplete("name")
+async def use_personality_autocomplete(interaction: discord.Interaction, current: str):
+    return [
+        discord.app_commands.Choice(name=k, value=k)
+        for k in personalities
+        if current.lower() in k.lower()
+    ][:25]
+
+@bot.tree.command(name="list_personalities", description="List available personalities")
+async def list_personalities(interaction: discord.Interaction):
+    current = active_personalities.get(interaction.guild_id, "default")
     liste = ", ".join(f"`{k}`" for k in personalities.keys())
-    logger.info(f"{ctx.author} listed personalities in guild {ctx.guild.id} (active={current})")
-    await ctx.send(f"Available : {liste}\nActive : `{current}`")
+    logger.info(f"{interaction.user} listed personalities in guild {interaction.guild_id} (active={current})")
+    await interaction.response.send_message(f"Available : {liste}\nActive : `{current}`")
 
-@bot.command(name="clear_history")
-@commands.has_permissions(manage_messages=True)
-async def clear_history(ctx: commands.Context):
-    """Clear the context history of the channel."""
-    logger.info(f"{ctx.author} cleared history in #{ctx.channel} (guild={ctx.guild.id})")
-    channel_histories.pop(ctx.channel.id, None)
-    await ctx.send("History cleared.")
+@bot.tree.command(name="clear_history", description="Clear the context history of this channel")
+@discord.app_commands.checks.has_permissions(manage_messages=True)
+async def clear_history(interaction: discord.Interaction):
+    logger.info(f"{interaction.user} cleared history in #{interaction.channel} (guild={interaction.guild_id})")
+    channel_histories.pop(interaction.channel_id, None)
+    await interaction.response.send_message("History cleared.")
 
 # Start the bot
 if __name__ == "__main__":
