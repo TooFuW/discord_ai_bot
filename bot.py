@@ -19,7 +19,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 MODEL = os.getenv("OLLAMA_MODEL")
 OLLAMA_URL = "http://localhost:11434/api/chat"
-PERSONALITIES_FILE = "personalities.json"
+PERSONALITIES_FILE = Path(__file__).parent / "personalities.json"
 PREFIX = "/"
 MAX_HISTORY = 60
 
