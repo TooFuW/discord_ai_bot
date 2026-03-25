@@ -6,6 +6,7 @@ import os
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
+import random
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,11 +37,17 @@ elif GROQ_API_KEY:
 else:
     raise RuntimeError("No AI backend configured: set OLLAMA_MODEL or GROQ_API_KEY in .env")
 
+class SilentTree(discord.app_commands.CommandTree):
+    async def on_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+        if isinstance(error.__cause__, discord.NotFound) and error.__cause__.code == 10062:
+            return
+        await super().on_error(interaction, error)
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix=PREFIX, intents=intents)
+bot = commands.Bot(command_prefix=PREFIX, intents=intents, tree_cls=SilentTree)
 
 channel_histories: dict[int, list] = {}
 active_personalities: dict[int, str] = {}
@@ -163,7 +170,7 @@ async def on_message(message: discord.Message):
     )
 
     # Respond only if mentioned
-    if bot.user not in message.mentions:
+    if bot.user not in message.mentions or random.randint(1, 10) <= 2:
         return
 
     guild_id = message.guild.id if message.guild else 0
@@ -213,6 +220,7 @@ async def use_personality_autocomplete(interaction: discord.Interaction, current
         for k in personalities
         if current.lower() in k.lower()
     ][:25]
+
 
 @bot.tree.command(name="list_personalities", description="List available personalities")
 async def list_personalities(interaction: discord.Interaction):
