@@ -209,3 +209,4 @@ __marimo__/
 # Custom
 personalities.json
 server_prompt.txt
+active_personalities.json
