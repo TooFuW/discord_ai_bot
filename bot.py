@@ -17,12 +17,24 @@ logger = logging.getLogger("bot")
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-MODEL = os.getenv("OLLAMA_MODEL")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL")
 OLLAMA_URL = "http://localhost:11434/api/chat"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 PERSONALITIES_FILE = Path(__file__).parent / "personalities.json"
 SERVER_PROMPT_FILE = Path(__file__).parent / "server_prompt.txt"
 PREFIX = "/"
 MAX_HISTORY = 60
+
+USE_OLLAMA = bool(OLLAMA_MODEL)
+
+if USE_OLLAMA:
+    logger.info(f"Backend: Ollama (model={OLLAMA_MODEL})")
+elif GROQ_API_KEY:
+    logger.info(f"Backend: Groq (model={GROQ_MODEL})")
+else:
+    raise RuntimeError("No AI backend configured: set OLLAMA_MODEL or GROQ_API_KEY in .env")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -70,13 +82,13 @@ def get_system_prompt(guild_id: int) -> str:
     return personality
 
 
-# Ollama
+# AI backends
 
 async def query_ollama(messages: list) -> str:
-    logger.info(f"Querying Ollama (model={MODEL}, {len(messages)} messages)")
+    logger.info(f"Querying Ollama (model={OLLAMA_MODEL}, {len(messages)} messages)")
     async with aiohttp.ClientSession() as session:
         payload = {
-            "model": MODEL,
+            "model": OLLAMA_MODEL,
             "messages": messages,
             "stream": False
         }
@@ -89,6 +101,32 @@ async def query_ollama(messages: list) -> str:
             response = data["message"]["content"]
             logger.info(f"Ollama response received ({len(response)} chars)")
             return response
+
+async def query_groq(messages: list) -> str:
+    logger.info(f"Querying Groq (model={GROQ_MODEL}, {len(messages)} messages)")
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": messages,
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(GROQ_URL, json=payload, headers=headers) as resp:
+            data = await resp.json()
+            logger.debug(f"Groq raw response: {data}")
+            if "choices" not in data:
+                logger.error(f"Unexpected Groq response structure: {data}")
+                raise ValueError(f"Unexpected response: {data}")
+            response = data["choices"][0]["message"]["content"]
+            logger.info(f"Groq response received ({len(response)} chars)")
+            return response
+
+async def query_ai(messages: list) -> str:
+    if USE_OLLAMA:
+        return await query_ollama(messages)
+    return await query_groq(messages)
 
 
 # History
@@ -136,10 +174,10 @@ async def on_message(message: discord.Message):
 
     async with message.channel.typing():
         try:
-            response = await query_ollama(messages_payload)
+            response = await query_ai(messages_payload)
         except Exception as e:
-            logger.error(f"Ollama error: {e}")
-            await message.reply(f"Error with Ollama : {e}")
+            logger.error(f"AI backend error: {e}")
+            await message.reply(f"Error : {e}")
             return
 
     add_to_history(message.channel.id, "assistant", response)
