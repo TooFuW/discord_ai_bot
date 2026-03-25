@@ -169,8 +169,8 @@ async def on_message(message: discord.Message):
         f"{message.author.display_name}: {message.content}"
     )
 
-    # Respond only if mentioned
-    if bot.user not in message.mentions or random.randint(1, 10) <= 2:
+    # Respond only if mentioned or if random chance (20%)
+    if (bot.user not in message.mentions) and (random.randint(1, 10) > 2):
         return
 
     guild_id = message.guild.id if message.guild else 0
