@@ -106,6 +106,9 @@ async def query_ollama(messages: list) -> str:
                 logger.error(f"Unexpected Ollama response structure: {data}")
                 raise ValueError(f"Unexpected response: {data}")
             response = data["message"]["content"]
+            if not response:
+                logger.error(f"Ollama returned empty content: {data}")
+                raise ValueError("Empty response from Ollama")
             logger.info(f"Ollama response received ({len(response)} chars)")
             return response
 
@@ -126,7 +129,12 @@ async def query_groq(messages: list) -> str:
             if "choices" not in data:
                 logger.error(f"Unexpected Groq response structure: {data}")
                 raise ValueError(f"Unexpected response: {data}")
-            response = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            response = choice["message"]["content"]
+            if not response:
+                finish_reason = choice.get("finish_reason", "unknown")
+                logger.error(f"Groq returned empty content (finish_reason={finish_reason})")
+                raise ValueError(f"Empty response from Groq (finish_reason={finish_reason})")
             logger.info(f"Groq response received ({len(response)} chars)")
             return response
 
@@ -186,6 +194,10 @@ async def on_message(message: discord.Message):
             logger.error(f"AI backend error: {e}")
             await message.reply(f"Error : {e}")
             return
+
+    if not response or not response.strip():
+        logger.warning("AI returned an empty response, skipping reply.")
+        return
 
     add_to_history(message.channel.id, "assistant", response)
     await message.reply(response)
