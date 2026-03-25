@@ -24,6 +24,7 @@ GROQ_MODEL = os.getenv("GROQ_MODEL")
 OLLAMA_URL = "http://localhost:11434/api/chat"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 PERSONALITIES_FILE = Path(__file__).parent / "personalities.json"
+ACTIVE_PERSONALITIES_FILE = Path(__file__).parent / "active_personalities.json"
 SERVER_PROMPT_FILE = Path(__file__).parent / "server_prompt.txt"
 PREFIX = "/"
 MAX_HISTORY = 60
@@ -50,7 +51,19 @@ intents.members = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, tree_cls=SilentTree)
 
 channel_histories: dict[int, list] = {}
-active_personalities: dict[int, str] = {}
+
+def load_active_personalities() -> dict[int, str]:
+    if ACTIVE_PERSONALITIES_FILE.exists():
+        with open(ACTIVE_PERSONALITIES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {int(k): v for k, v in data.items()}
+    return {}
+
+def save_active_personalities(data: dict[int, str]):
+    with open(ACTIVE_PERSONALITIES_FILE, "w", encoding="utf-8") as f:
+        json.dump({str(k): v for k, v in data.items()}, f, indent=2)
+
+active_personalities: dict[int, str] = load_active_personalities()
 
 def load_server_prompt() -> str:
     if SERVER_PROMPT_FILE.exists():
@@ -222,6 +235,7 @@ async def use_personality(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(f"Unknown personality `{name}`.", ephemeral=True)
         return
     active_personalities[interaction.guild_id] = name
+    save_active_personalities(active_personalities)
     logger.info(f"{interaction.user} activated personality '{name}' in guild {interaction.guild_id}")
     await interaction.response.send_message(f"Personality `{name}` activated.")
 
