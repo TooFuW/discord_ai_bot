@@ -235,6 +235,7 @@ async def on_message(message: discord.Message):
                 await message.channel.send(f"{member.display_name} muted. Reason: {reason}")
             except discord.Forbidden:
                 logger.warning(f"Missing permission to mute {member}")
+                await message.channel.send(f"Could not mute {member.display_name}. Missing permissions.")
         else:
             logger.warning(f"Mute requested but user '{username}' not found in guild")
 
