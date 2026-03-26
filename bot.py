@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 import random
+from datetime import timedelta
 
 logging.basicConfig(
     level=logging.INFO,
@@ -184,11 +185,14 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
     # Save the message to the history
-    add_to_history(
-        message.channel.id,
-        "user",
-        f"{message.author.display_name}: {message.content}"
-    )
+    author_tag = f"{message.author.display_name} (@{message.author.name})"
+    if message.reference and isinstance(message.reference.resolved, discord.Message):
+        ref = message.reference.resolved
+        ref_tag = f"{ref.author.display_name} (@{ref.author.name})"
+        entry = f'{author_tag} [en réponse à {ref_tag}: "{ref.content[:150]}"]: {message.content}'
+    else:
+        entry = f"{author_tag}: {message.content}"
+    add_to_history(message.channel.id, "user", entry)
 
     # Respond only if mentioned or if random chance (20%)
     if (bot.user not in message.mentions) and (random.randint(1, 10) > 2):
@@ -212,8 +216,29 @@ async def on_message(message: discord.Message):
         logger.warning("AI returned an empty response, skipping reply.")
         return
 
-    add_to_history(message.channel.id, "assistant", response)
-    await message.reply(response)
+    try:
+        response_data = json.loads(response)
+        response_content = response_data.get("reply", response)
+    except json.JSONDecodeError:
+        response_content = response
+        response_data = {}
+
+    mute_data = response_data.get("mute")
+    if mute_data and message.guild:
+        username = mute_data.get("user", "").lstrip("@")
+        reason = mute_data.get("reason", "mute par le bot")
+        member = discord.utils.find(lambda m: m.name == username, message.guild.members)
+        if member:
+            try:
+                await member.timeout(timedelta(minutes=1), reason=reason)
+                logger.info(f"Muted {member} for 1min — reason: {reason}")
+            except discord.Forbidden:
+                logger.warning(f"Missing permission to mute {member}")
+        else:
+            logger.warning(f"Mute requested but user '{username}' not found in guild")
+
+    add_to_history(message.channel.id, "assistant", response_content)
+    await message.reply(response_content)
 
 
 # Commands
