@@ -232,6 +232,7 @@ async def on_message(message: discord.Message):
             try:
                 await member.timeout(timedelta(minutes=1), reason=reason)
                 logger.info(f"Muted {member} for 1min — reason: {reason}")
+                await message.channel.send(f"{member.display_name} muted. Reason: {reason}")
             except discord.Forbidden:
                 logger.warning(f"Missing permission to mute {member}")
         else:
