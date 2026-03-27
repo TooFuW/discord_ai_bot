@@ -247,7 +247,6 @@ async def on_message(message: discord.Message):
 
 @bot.tree.command(name="add_personality", description="Create or modify a personality")
 @discord.app_commands.describe(name="Personality name", prompt="System prompt for this personality")
-@discord.app_commands.checks.has_permissions(manage_guild=True)
 async def add_personality(interaction: discord.Interaction, name: str, prompt: str):
     logger.info(f"{interaction.user} added/updated personality '{name}' in guild {interaction.guild_id}")
     personalities[name] = prompt
@@ -273,7 +272,6 @@ async def use_personality_autocomplete(interaction: discord.Interaction, current
         for k in personalities
         if current.lower() in k.lower()
     ][:25]
-
 
 @bot.tree.command(name="list_personalities", description="List available personalities")
 async def list_personalities(interaction: discord.Interaction):
