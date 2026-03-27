@@ -22,6 +22,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL")
+GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL")
 OLLAMA_URL = "http://localhost:11434/api/chat"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 PERSONALITIES_FILE = Path(__file__).parent / "personalities.json"
@@ -126,30 +127,46 @@ async def query_ollama(messages: list) -> str:
             logger.info(f"Ollama response received ({len(response)} chars)")
             return response
 
-async def query_groq(messages: list) -> str:
-    logger.info(f"Querying Groq (model={GROQ_MODEL}, {len(messages)} messages)")
+async def _query_groq_model(session: aiohttp.ClientSession, model: str, messages: list) -> str:
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
     }
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": messages,
-    }
+    payload = {"model": model, "messages": messages}
+    async with session.post(GROQ_URL, json=payload, headers=headers) as resp:
+        if resp.status == 429:
+            raise RateLimitError(model)
+        data = await resp.json()
+        logger.debug(f"Groq raw response: {data}")
+        if "choices" not in data:
+            logger.error(f"Unexpected Groq response structure: {data}")
+            raise ValueError(f"Unexpected response: {data}")
+        choice = data["choices"][0]
+        response = choice["message"]["content"]
+        if not response:
+            finish_reason = choice.get("finish_reason", "unknown")
+            logger.error(f"Groq returned empty content (finish_reason={finish_reason})")
+            raise ValueError(f"Empty response from Groq (finish_reason={finish_reason})")
+        return response
+
+class RateLimitError(Exception):
+    def __init__(self, model: str):
+        super().__init__(f"Rate limit reached for model '{model}'")
+        self.model = model
+
+async def query_groq(messages: list) -> str:
     async with aiohttp.ClientSession() as session:
-        async with session.post(GROQ_URL, json=payload, headers=headers) as resp:
-            data = await resp.json()
-            logger.debug(f"Groq raw response: {data}")
-            if "choices" not in data:
-                logger.error(f"Unexpected Groq response structure: {data}")
-                raise ValueError(f"Unexpected response: {data}")
-            choice = data["choices"][0]
-            response = choice["message"]["content"]
-            if not response:
-                finish_reason = choice.get("finish_reason", "unknown")
-                logger.error(f"Groq returned empty content (finish_reason={finish_reason})")
-                raise ValueError(f"Empty response from Groq (finish_reason={finish_reason})")
+        logger.info(f"Querying Groq (model={GROQ_MODEL}, {len(messages)} messages)")
+        try:
+            response = await _query_groq_model(session, GROQ_MODEL, messages)
             logger.info(f"Groq response received ({len(response)} chars)")
+            return response
+        except RateLimitError:
+            if not GROQ_FALLBACK_MODEL:
+                raise
+            logger.warning(f"Rate limit on {GROQ_MODEL}, falling back to {GROQ_FALLBACK_MODEL}")
+            response = await _query_groq_model(session, GROQ_FALLBACK_MODEL, messages)
+            logger.info(f"Groq fallback response received ({len(response)} chars)")
             return response
 
 async def query_ai(messages: list) -> str:
@@ -202,7 +219,18 @@ async def on_message(message: discord.Message):
     system_prompt = get_system_prompt(guild_id)
     logger.info(f"Mention from {message.author} in #{message.channel} (guild={guild_id})")
 
-    messages_payload = [{"role": "system", "content": system_prompt}] + channel_histories[message.channel.id]
+    if message.guild and hasattr(message.channel, "members"):
+        members_list = ", ".join(
+            f"Pseudo : {m.display_name} | Tag : <@{m.id}>"
+            for m in message.channel.members
+            if not m.bot
+        )
+        full_system_prompt = f"{system_prompt}\n\nMembres présents dans ce salon : {members_list}"
+        print(full_system_prompt)
+    else:
+        full_system_prompt = system_prompt
+
+    messages_payload = [{"role": "system", "content": full_system_prompt}] + channel_histories[message.channel.id]
 
     async with message.channel.typing():
         try:
