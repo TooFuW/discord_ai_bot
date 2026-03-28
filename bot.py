@@ -230,7 +230,6 @@ async def on_message(message: discord.Message):
             if not m.bot
         )
         full_system_prompt = f"{system_prompt}\n\nMembres présents dans ce salon : {members_list}"
-        print(full_system_prompt)
     else:
         full_system_prompt = system_prompt
 
