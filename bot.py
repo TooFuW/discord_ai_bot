@@ -134,19 +134,23 @@ async def _query_groq_model(session: aiohttp.ClientSession, model: str, messages
     }
     payload = {"model": model, "messages": messages}
     async with session.post(GROQ_URL, json=payload, headers=headers) as resp:
-        if resp.status == 429:
+        if resp.status in (429, 503):
             raise RateLimitError(model)
         data = await resp.json()
         logger.debug(f"Groq raw response: {data}")
         if "choices" not in data:
+            error = data.get("error", {})
+            error_msg = error.get("message", "") if isinstance(error, dict) else str(error)
+            if "over capacity" in error_msg.lower() or "overloaded" in error_msg.lower():
+                raise RateLimitError(model)
             logger.error(f"Unexpected Groq response structure: {data}")
             raise ValueError(f"Unexpected response: {data}")
         choice = data["choices"][0]
         response = choice["message"]["content"]
         if not response:
             finish_reason = choice.get("finish_reason", "unknown")
-            logger.error(f"Groq returned empty content (finish_reason={finish_reason})")
-            raise ValueError(f"Empty response from Groq (finish_reason={finish_reason})")
+            logger.error(f"Groq returned empty content (finish_reason={finish_reason}), trying fallback")
+            raise RateLimitError(model)
         return response
 
 class RateLimitError(Exception):
