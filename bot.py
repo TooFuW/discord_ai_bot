@@ -215,8 +215,8 @@ async def on_message(message: discord.Message):
         entry = f"{author_tag}: {message.content}"
     add_to_history(message.channel.id, "user", entry)
 
-    # Respond only if mentioned or if random chance (20%)
-    if (bot.user not in message.mentions) and (random.randint(1, 10) > 2):
+    # Respond only if mentioned or if random chance (10%)
+    if (bot.user not in message.mentions) and (random.randint(1, 10) > 1):
         return
 
     guild_id = message.guild.id if message.guild else 0
