@@ -197,6 +197,8 @@ async def on_ready():
     await bot.tree.sync()
     logger.info(f"Connected as {bot.user} (ID: {bot.user.id}), slash commands synced")
 
+shut_up = False
+
 @bot.event
 async def on_message(message: discord.Message):
     # Ignore bot messages
@@ -215,8 +217,8 @@ async def on_message(message: discord.Message):
         entry = f"{author_tag}: {message.content}"
     add_to_history(message.channel.id, "user", entry)
 
-    # Respond only if mentioned or if random chance (10%)
-    if (bot.user not in message.mentions) and (random.randint(1, 10) > 1):
+    # Respond only if mentioned or if random chance (10%) or if shut_up is True
+    if ((bot.user not in message.mentions) and (random.randint(1, 10) > 1)) or shut_up:
         return
 
     guild_id = message.guild.id if message.guild else 0
@@ -317,6 +319,20 @@ async def clear_history(interaction: discord.Interaction):
     logger.info(f"{interaction.user} cleared history in #{interaction.channel} (guild={interaction.guild_id})")
     channel_histories.pop(interaction.channel_id, None)
     await interaction.response.send_message("History cleared.")
+
+@bot.tree.command(name="shut_up", description="Shut up the bot")
+async def shut_up(interaction: discord.Interaction):
+    global shut_up
+    shut_up = True
+    logger.info(f"{interaction.user} shut up the bot in guild {interaction.guild_id}")
+    await interaction.response.send_message("Bot shut up.")
+
+@bot.tree.command(name="unshut_up", description="Unshut up the bot")
+async def unshut_up(interaction: discord.Interaction):
+    global shut_up
+    shut_up = False
+    logger.info(f"{interaction.user} unshut up the bot in guild {interaction.guild_id}")
+    await interaction.response.send_message("Bot unshut up.")
 
 # Start the bot
 if __name__ == "__main__":
