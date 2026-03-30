@@ -218,7 +218,7 @@ async def on_message(message: discord.Message):
     add_to_history(message.channel.id, "user", entry)
 
     # Respond only if mentioned or if random chance (10%) or if shut_up is True
-    if ((bot.user not in message.mentions) and (random.randint(1, 10) > 1)) or shut_up:
+    if (bot.user not in message.mentions) and ((random.randint(1, 10) > 1) or shut_up is True):
         return
 
     guild_id = message.guild.id if message.guild else 0
