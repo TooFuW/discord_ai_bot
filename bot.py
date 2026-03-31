@@ -325,14 +325,14 @@ async def shut_up(interaction: discord.Interaction):
     global shut_up
     shut_up = True
     logger.info(f"{interaction.user} shut up the bot in guild {interaction.guild_id}")
-    await interaction.response.send_message("Bot shut up.")
+    await interaction.response.send_message("**/unshut_up** to allow me to talk by myself again.")
 
 @bot.tree.command(name="unshut_up", description="Unshut up the bot")
 async def unshut_up(interaction: discord.Interaction):
     global shut_up
     shut_up = False
     logger.info(f"{interaction.user} unshut up the bot in guild {interaction.guild_id}")
-    await interaction.response.send_message("Bot unshut up.")
+    await interaction.response.send_message("I can talk by myself again.")
 
 # Start the bot
 if __name__ == "__main__":
