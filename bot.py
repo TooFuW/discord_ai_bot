@@ -285,6 +285,7 @@ async def on_message(message: discord.Message):
         member = find_member(rename_data.get("user", ""))
         if member and new_name:
             try:
+                await message.channel.send(f"**{member.display_name}** renamed to **{new_name}**")
                 await member.edit(nick=new_name)
                 logger.info(f"Renamed {member} to '{new_name}'")
             except discord.Forbidden:
