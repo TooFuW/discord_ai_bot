@@ -256,11 +256,18 @@ async def on_message(message: discord.Message):
         response_content = response
         response_data = {}
 
+    def find_member(raw: str):
+        uid = raw.lstrip("@<").rstrip(">").strip()
+        return (
+            discord.utils.find(lambda m: str(m.id) == uid, message.guild.members) or
+            discord.utils.find(lambda m: m.name == uid, message.guild.members) or
+            discord.utils.find(lambda m: m.display_name == uid, message.guild.members)
+        )
+
     mute_data = response_data.get("mute")
     if mute_data and message.guild:
-        username = mute_data.get("user", "").lstrip("@")
         reason = mute_data.get("reason", "mute par le bot")
-        member = discord.utils.find(lambda m: m.name == username, message.guild.members)
+        member = find_member(mute_data.get("user", ""))
         if member:
             try:
                 await member.timeout(timedelta(seconds=20), reason=reason)
@@ -270,22 +277,21 @@ async def on_message(message: discord.Message):
                 logger.warning(f"Missing permission to mute {member}")
                 await message.channel.send(f"Could not mute **{member.display_name}**. Missing permissions.")
         else:
-            logger.warning(f"Mute requested but user **{username}** not found in guild")
+            logger.warning(f"Mute requested but user '{mute_data.get('user')}' not found in guild")
 
     rename_data = response_data.get("rename")
     if rename_data and message.guild:
-        username = rename_data.get("user", "").lstrip("@")
         new_name = rename_data.get("new_name", "")
-        member = discord.utils.find(lambda m: m.name == username, message.guild.members)
+        member = find_member(rename_data.get("user", ""))
         if member and new_name:
             try:
                 await member.edit(nick=new_name)
                 logger.info(f"Renamed {member} to '{new_name}'")
             except discord.Forbidden:
                 logger.warning(f"Missing permission to rename {member}")
-                await message.channel.send(f"Impossible to rename **{member.display_name}**. Missing permissions.")
+                await message.channel.send(f"Impossible de renommer **{member.display_name}**. Permissions insuffisantes.")
         else:
-            logger.warning(f"Rename requested but user '{username}' not found or new_name empty")
+            logger.warning(f"Rename requested but user '{rename_data.get('user')}' not found or new_name empty")
 
     add_to_history(message.channel.id, "assistant", response_content)
     await message.reply(response_content)
