@@ -1,13 +1,13 @@
 # discord_ai_bot
 
-AI-powered Discord bot with customizable personalities, conversation history, and mute capabilities.
+AI-powered Discord bot with customizable personalities, conversation history, mute and rename capabilities.
 
 ## Features
 
 - Responds to mentions and joins conversations randomly (30% chance)
 - Maintains per-channel conversation history (up to 60 messages)
 - Configurable AI personalities per server
-- Moderation: can mute users on request or when he feels like it
+- Moderation: can mute or rename users on request or when it feels like it
 - Supports two AI backends: **Groq** (cloud) or **Ollama** (local)
 - Automatic fallback to a secondary model on Groq rate limits
 
@@ -69,10 +69,18 @@ The bot expects JSON responses from the AI:
 { "reply": "response message" }
 ```
 
-With an optional moderation action:
+With optional moderation actions (can be combined):
 
 ```json
 { "reply": "message", "mute": { "user": "@username", "reason": "reason" } }
+```
+
+```json
+{ "reply": "message", "rename": { "user": "@username", "new_name": "new nickname" } }
+```
+
+```json
+{ "reply": "message", "mute": { "user": "@username", "reason": "reason" }, "rename": { "user": "@username", "new_name": "new nickname" } }
 ```
 
 ## Project Structure
@@ -91,3 +99,4 @@ discord_ai_bot/
 - `message_content` — read message content
 - `members` — access the member list
 - `moderate_members` — timeout (mute) users
+- `manage_nicknames` — rename users

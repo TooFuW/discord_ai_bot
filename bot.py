@@ -272,6 +272,21 @@ async def on_message(message: discord.Message):
         else:
             logger.warning(f"Mute requested but user **{username}** not found in guild")
 
+    rename_data = response_data.get("rename")
+    if rename_data and message.guild:
+        username = rename_data.get("user", "").lstrip("@")
+        new_name = rename_data.get("new_name", "")
+        member = discord.utils.find(lambda m: m.name == username, message.guild.members)
+        if member and new_name:
+            try:
+                await member.edit(nick=new_name)
+                logger.info(f"Renamed {member} to '{new_name}'")
+            except discord.Forbidden:
+                logger.warning(f"Missing permission to rename {member}")
+                await message.channel.send(f"Impossible to rename **{member.display_name}**. Missing permissions.")
+        else:
+            logger.warning(f"Rename requested but user '{username}' not found or new_name empty")
+
     add_to_history(message.channel.id, "assistant", response_content)
     await message.reply(response_content)
 
