@@ -3,6 +3,7 @@ from discord.ext import commands
 import aiohttp
 import json
 import os
+import asyncio
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
@@ -30,6 +31,7 @@ ACTIVE_PERSONALITIES_FILE = Path(__file__).parent / "active_personalities.json"
 SERVER_PROMPT_FILE = Path(__file__).parent / "server_prompt.txt"
 PREFIX = "/"
 MAX_HISTORY = 60
+SOCKET_PATH = "/tmp/knapikette.sock"
 
 USE_OLLAMA = bool(OLLAMA_MODEL)
 
@@ -53,6 +55,164 @@ intents.members = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, tree_cls=SilentTree)
 
 channel_histories: dict[int, list] = {}
+cli_clients: set = set()
+
+MESSAGE_CACHE_SIZE = 200
+message_cache: dict[int, discord.Message] = {}
+_message_cache_order: list[int] = []
+
+def cache_message(msg: discord.Message):
+    if msg.id not in message_cache:
+        _message_cache_order.append(msg.id)
+        if len(_message_cache_order) > MESSAGE_CACHE_SIZE:
+            old_id = _message_cache_order.pop(0)
+            message_cache.pop(old_id, None)
+    message_cache[msg.id] = msg
+
+
+# CLI socket server
+
+async def handle_cli_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    cli_clients.add(writer)
+    try:
+        for guild in bot.guilds:
+            for channel in guild.text_channels:
+                if channel.permissions_for(guild.me).send_messages:
+                    writer.write(f"CHANNEL|{channel.id}|{channel.name}|{guild.id}\n".encode())
+            for member in guild.members:
+                if not member.bot:
+                    writer.write(f"MEMBER|{member.id}|{member.display_name}|{member.name}|{guild.id}\n".encode())
+                    writer.write(f"PRESENCE|{member.id}|{str(member.status)}\n".encode())
+        await writer.drain()
+    except Exception as e:
+        logger.warning(f"[CLI] Could not send initial data: {e}")
+    try:
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            cmd = line.decode(errors="replace").rstrip()
+            if cmd.startswith("SEND|"):
+                parts = cmd.split("|", 2)
+                if len(parts) == 3:
+                    _, channel_id_str, content = parts
+                    try:
+                        channel = bot.get_channel(int(channel_id_str))
+                        if channel:
+                            has_everyone = "@everyone" in content or "@here" in content
+                            await channel.send(
+                                content,
+                                allowed_mentions=discord.AllowedMentions(
+                                    everyone=has_everyone, users=True, roles=True
+                                ),
+                            )
+                            add_to_history(int(channel_id_str), "assistant", content)
+                            logger.info(f"[CLI] Sent to #{channel.name}: {content[:60]}")
+                    except Exception as e:
+                        logger.error(f"[CLI] Send error: {e}")
+            elif cmd.startswith("CMD|"):
+                parts = cmd.split("|", 3)
+                command = parts[1] if len(parts) > 1 else ""
+                reply = ""
+                if command == "clear_history":
+                    channel_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+                    if channel_id:
+                        channel_histories.pop(channel_id, None)
+                        reply = "[OK] Historique effacé"
+                    else:
+                        reply = "[Erreur] channel_id manquant"
+                elif command == "shut_up":
+                    global bot_muted
+                    bot_muted = True
+                    reply = "[OK] Bot silencieux"
+                elif command == "unshut_up":
+                    bot_muted = False
+                    reply = "[OK] Bot peut parler à nouveau"
+                elif command == "list_personalities":
+                    guild_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+                    current = active_personalities.get(guild_id, "default")
+                    reply = f"Disponibles : {', '.join(personalities.keys())} | Active : {current}"
+                elif command == "use_personality":
+                    if len(parts) == 4:
+                        guild_id_str, name = parts[2], parts[3]
+                        gid = int(guild_id_str) if guild_id_str.isdigit() else 0
+                        if name in personalities:
+                            active_personalities[gid] = name
+                            save_active_personalities(active_personalities)
+                            reply = f"[OK] Personnalité '{name}' activée"
+                        else:
+                            reply = f"[Erreur] Personnalité inconnue : {name}"
+                    else:
+                        reply = "[Erreur] Usage : /use_personality <nom>"
+                else:
+                    reply = f"[Erreur] Commande inconnue : {command}"
+                writer.write(f"REPLY|{reply}\n".encode())
+                await writer.drain()
+            elif cmd.startswith("REPLY_TO|"):
+                parts = cmd.split("|", 3)
+                if len(parts) == 4:
+                    _, channel_id_str, message_id_str, content = parts
+                    try:
+                        channel = bot.get_channel(int(channel_id_str))
+                        if channel:
+                            msg = message_cache.get(int(message_id_str))
+                            if msg is None:
+                                msg = await channel.fetch_message(int(message_id_str))
+                            has_everyone = "@everyone" in content or "@here" in content
+                            await msg.reply(
+                                content,
+                                allowed_mentions=discord.AllowedMentions(
+                                    everyone=has_everyone, users=True, roles=True
+                                ),
+                            )
+                            add_to_history(int(channel_id_str), "assistant", content)
+                            logger.info(f"[CLI] Replied to {message_id_str} in #{channel.name}: {content[:60]}")
+                    except Exception as e:
+                        logger.error(f"[CLI] Reply error: {e}")
+                        writer.write(f"REPLY|[Erreur] {e}\n".encode())
+                        await writer.drain()
+            elif cmd.startswith("REACT|"):
+                parts = cmd.split("|", 3)
+                if len(parts) == 4:
+                    _, channel_id_str, message_id_str, emoji = parts
+                    try:
+                        channel = bot.get_channel(int(channel_id_str))
+                        if channel:
+                            msg = message_cache.get(int(message_id_str))
+                            if msg is None:
+                                msg = await channel.fetch_message(int(message_id_str))
+                            await msg.add_reaction(emoji)
+                            logger.info(f"[CLI] Reacted {emoji} to {message_id_str}")
+                    except Exception as e:
+                        logger.error(f"[CLI] React error: {e}")
+                        writer.write(f"REPLY|[Erreur] {e}\n".encode())
+                        await writer.drain()
+    finally:
+        cli_clients.discard(writer)
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+async def start_cli_server():
+    if os.path.exists(SOCKET_PATH):
+        os.unlink(SOCKET_PATH)
+    server = await asyncio.start_unix_server(handle_cli_client, SOCKET_PATH)
+    logger.info(f"CLI socket ready at {SOCKET_PATH}")
+    async with server:
+        await server.serve_forever()
+
+async def broadcast_to_cli(msg: str):
+    if not cli_clients:
+        return
+    dead = set()
+    for writer in list(cli_clients):
+        try:
+            writer.write((msg + "\n").encode())
+            await writer.drain()
+        except Exception:
+            dead.add(writer)
+    cli_clients.difference_update(dead)
 
 def load_active_personalities() -> dict[int, str]:
     if ACTIVE_PERSONALITIES_FILE.exists():
@@ -192,10 +352,16 @@ def add_to_history(channel_id: int, role: str, content: str):
 
 # Events
 
+_cli_server_started = False
+
 @bot.event
 async def on_ready():
+    global _cli_server_started
     await bot.tree.sync()
     logger.info(f"Connected as {bot.user} (ID: {bot.user.id}), slash commands synced")
+    if not _cli_server_started:
+        _cli_server_started = True
+        asyncio.create_task(start_cli_server())
 
 shut_up = False
 
