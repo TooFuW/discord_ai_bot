@@ -74,6 +74,7 @@ def cache_message(msg: discord.Message):
 
 async def handle_cli_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     cli_clients.add(writer)
+    # Send channels + members on connect
     try:
         for guild in bot.guilds:
             for channel in guild.text_channels:
@@ -363,7 +364,7 @@ async def on_ready():
         _cli_server_started = True
         asyncio.create_task(start_cli_server())
 
-shut_up = False
+bot_muted = False
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -382,9 +383,30 @@ async def on_message(message: discord.Message):
     else:
         entry = f"{author_tag}: {message.content}"
     add_to_history(message.channel.id, "user", entry)
+    channel_name = getattr(message.channel, "name", "dm")
+    cache_message(message)
+    cli_content = message.content
+    extras = []
+    for att in message.attachments:
+        ct = att.content_type or ""
+        if ct.startswith("image/"):
+            extras.append(f"[Image: {att.filename}]")
+        elif ct.startswith("video/"):
+            extras.append(f"[Vidéo: {att.filename}]")
+        elif ct.startswith("audio/"):
+            extras.append(f"[Audio: {att.filename}]")
+        else:
+            extras.append(f"[Fichier: {att.filename}]")
+    for sticker in message.stickers:
+        extras.append(f"[Autocollant: {sticker.name}]")
+    if extras:
+        cli_content = (cli_content + " " if cli_content else "") + " ".join(extras)
+    asyncio.create_task(broadcast_to_cli(
+        f"MSG|{message.channel.id}|{channel_name}|{message.author.display_name}|{message.id}|{cli_content}"
+    ))
 
-    # Respond only if mentioned or if random chance (10%) or if shut_up is True
-    if (bot.user not in message.mentions) and ((random.randint(1, 10) > 1) or shut_up is True):
+    # Respond only if mentioned or if random chance (10%) or if bot_muted is True
+    if (bot.user not in message.mentions) and ((random.randint(1, 10) > 1) or bot_muted):
         return
 
     guild_id = message.guild.id if message.guild else 0
@@ -461,7 +483,54 @@ async def on_message(message: discord.Message):
             logger.warning(f"Rename requested but user '{rename_data.get('user')}' not found or new_name empty")
 
     add_to_history(message.channel.id, "assistant", response_content)
-    await message.reply(response_content)
+    sent = await message.reply(response_content)
+    channel_name = getattr(message.channel, "name", "dm")
+    asyncio.create_task(broadcast_to_cli(
+        f"MSG|{sent.channel.id}|{channel_name}|{bot.user.display_name}|{sent.id}|{response_content}"
+    ))
+
+
+@bot.event
+async def on_presence_update(before: discord.Member, after: discord.Member):
+    if before.status != after.status:
+        asyncio.create_task(broadcast_to_cli(
+            f"PRESENCE|{after.id}|{str(after.status)}"
+        ))
+
+
+@bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return
+    channel = bot.get_channel(payload.channel_id)
+    if channel is None:
+        return
+    channel_name = getattr(channel, "name", "dm")
+    if payload.member:
+        display = payload.member.display_name
+    else:
+        guild = bot.get_guild(payload.guild_id) if payload.guild_id else None
+        member = guild.get_member(payload.user_id) if guild else None
+        display = member.display_name if member else str(payload.user_id)
+    asyncio.create_task(broadcast_to_cli(
+        f"REACTION_ADD|{channel.id}|{channel_name}|{display}|{str(payload.emoji)}|{payload.message_id}"
+    ))
+
+
+@bot.event
+async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return
+    channel = bot.get_channel(payload.channel_id)
+    if channel is None:
+        return
+    channel_name = getattr(channel, "name", "dm")
+    guild = bot.get_guild(payload.guild_id) if payload.guild_id else None
+    member = guild.get_member(payload.user_id) if guild else None
+    display = member.display_name if member else str(payload.user_id)
+    asyncio.create_task(broadcast_to_cli(
+        f"REACTION_REMOVE|{channel.id}|{channel_name}|{display}|{str(payload.emoji)}|{payload.message_id}"
+    ))
 
 
 # Commands
@@ -509,16 +578,16 @@ async def clear_history(interaction: discord.Interaction):
     await interaction.response.send_message("History cleared.")
 
 @bot.tree.command(name="shut_up", description="Shut up the bot")
-async def shut_up(interaction: discord.Interaction):
-    global shut_up
-    shut_up = True
+async def cmd_shut_up(interaction: discord.Interaction):
+    global bot_muted
+    bot_muted = True
     logger.info(f"{interaction.user} shut up the bot in guild {interaction.guild_id}")
     await interaction.response.send_message("**/unshut_up** to allow me to talk by myself again.")
 
 @bot.tree.command(name="unshut_up", description="Unshut up the bot")
-async def unshut_up(interaction: discord.Interaction):
-    global shut_up
-    shut_up = False
+async def cmd_unshut_up(interaction: discord.Interaction):
+    global bot_muted
+    bot_muted = False
     logger.info(f"{interaction.user} unshut up the bot in guild {interaction.guild_id}")
     await interaction.response.send_message("I can talk by myself again.")
 
