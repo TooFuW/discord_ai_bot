@@ -215,6 +215,21 @@ async def broadcast_to_cli(msg: str):
             dead.add(writer)
     cli_clients.difference_update(dead)
 
+async def _auto_react(message: discord.Message, system_prompt: str):
+    prompt = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message.content},
+    ]
+    try:
+        raw = (await query_ai(prompt)).strip()
+        data = json.loads(raw)
+        emoji = data.get("reaction", "")
+        if emoji:
+            await message.add_reaction(emoji)
+            logger.info(f"[AutoReact] {emoji} in #{getattr(message.channel, 'name', 'dm')}")
+    except Exception as e:
+        logger.warning(f"[AutoReact] Failed: {e}")
+
 def load_active_personalities() -> dict[int, str]:
     if ACTIVE_PERSONALITIES_FILE.exists():
         with open(ACTIVE_PERSONALITIES_FILE, "r", encoding="utf-8") as f:
@@ -405,13 +420,25 @@ async def on_message(message: discord.Message):
         f"MSG|{message.channel.id}|{channel_name}|{message.author.display_name}|{message.id}|{cli_content}"
     ))
 
+    guild_id = message.guild.id if message.guild else 0
+
+    # Auto-reaction (30% chance, sauf si bot réduit au silence)
+    if not bot_muted and message.content and random.randint(1, 10) <= 3:
+        asyncio.create_task(_auto_react(message, get_system_prompt(guild_id)))
+
     # Respond only if mentioned or if random chance (10%) or if bot_muted is True
     if (bot.user not in message.mentions) and ((random.randint(1, 10) > 1) or bot_muted):
         return
 
-    guild_id = message.guild.id if message.guild else 0
     system_prompt = get_system_prompt(guild_id)
     logger.info(f"Mention from {message.author} in #{message.channel} (guild={guild_id})")
+
+    history_note = (
+        "L'historique ci-dessous est la conversation du salon Discord. "
+        "Chaque message est au format \"Pseudo (@username): contenu\". "
+        "Plusieurs personnes différentes peuvent parler. "
+        "Tu participes à cette conversation et tu peux répondre même si le dernier message ne t'était pas directement adressé."
+    )
 
     if message.guild and hasattr(message.channel, "members"):
         members_list = ", ".join(
@@ -419,9 +446,9 @@ async def on_message(message: discord.Message):
             for m in message.channel.members
             if not m.bot
         )
-        full_system_prompt = f"{system_prompt}\n\nMembres présents dans ce salon : {members_list}"
+        full_system_prompt = f"{system_prompt}\n\n{history_note}\n\nMembres présents dans ce salon : {members_list}"
     else:
-        full_system_prompt = system_prompt
+        full_system_prompt = f"{system_prompt}\n\n{history_note}"
 
     messages_payload = [{"role": "system", "content": full_system_prompt}] + channel_histories[message.channel.id]
 
@@ -481,6 +508,13 @@ async def on_message(message: discord.Message):
                 await message.channel.send(f"Impossible de renommer **{member.display_name}**. Permissions insuffisantes.")
         else:
             logger.warning(f"Rename requested but user '{rename_data.get('user')}' not found or new_name empty")
+
+    reaction = response_data.get("reaction")
+    if reaction:
+        try:
+            await message.add_reaction(reaction)
+        except Exception as e:
+            logger.warning(f"[Reaction] Could not add {reaction}: {e}")
 
     add_to_history(message.channel.id, "assistant", response_content)
     sent = await message.reply(response_content)
