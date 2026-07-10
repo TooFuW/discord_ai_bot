@@ -167,10 +167,10 @@ def receiver(sock: socket.socket):
                     with state_lock:
                         member_status[mid] = status
             elif text.startswith("MSG|"):
-                parts = text.split("|", 5)
-                if len(parts) >= 5:
-                    _, cid, cname, author, mid_str = parts[:5]
-                    content = parts[5] if len(parts) == 6 else ""
+                parts = text.split("|", 6)
+                if len(parts) >= 6:
+                    _, cid, cname, author, mid_str, ref_id_str = parts[:6]
+                    content = parts[6] if len(parts) == 7 else ""
                     try:
                         mid = int(mid_str)
                     except ValueError:
@@ -191,7 +191,17 @@ def receiver(sock: socket.socket):
                             msg_id_to_info[mid] = (counter, author, content)
                         else:
                             counter = 0
-                    safe_print(format_message(cname, cid, author, content, counter))
+                        ref_display = ""
+                        if ref_id_str:
+                            try:
+                                ref_info = msg_id_to_info.get(int(ref_id_str))
+                                if ref_info:
+                                    r_cnt, r_author, r_content = ref_info
+                                    preview = r_content[:40] + ("…" if len(r_content) > 40 else "")
+                                    ref_display = f"\n    \033[2m↩ [{r_cnt}] {r_author}: {preview}\033[0m"
+                            except ValueError:
+                                pass
+                    safe_print(format_message(cname, cid, author, content, counter) + ref_display)
                     for img_url in IMAGE_URL_RE.findall(content):
                         image_buffer.append(img_url)
                         if show_images:

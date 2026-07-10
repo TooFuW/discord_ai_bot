@@ -110,7 +110,7 @@ async def handle_cli_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                             add_to_history(int(channel_id_str), "assistant", content)
                             logger.info(f"[CLI] Sent to #{channel.name}: {content[:60]}")
                             asyncio.create_task(broadcast_to_cli(
-                                f"MSG|{channel.id}|{channel.name}|{bot.user.display_name}|{sent.id}|{content}"
+                                f"MSG|{channel.id}|{channel.name}|{bot.user.display_name}|{sent.id}||{content}"
                             ))
                     except Exception as e:
                         logger.error(f"[CLI] Send error: {e}")
@@ -172,7 +172,7 @@ async def handle_cli_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                             add_to_history(int(channel_id_str), "assistant", content)
                             logger.info(f"[CLI] Replied to {message_id_str} in #{channel.name}: {content[:60]}")
                             asyncio.create_task(broadcast_to_cli(
-                                f"MSG|{channel.id}|{channel.name}|{bot.user.display_name}|{sent_reply.id}|{content}"
+                                f"MSG|{channel.id}|{channel.name}|{bot.user.display_name}|{sent_reply.id}|{message_id_str}|{content}"
                             ))
                     except Exception as e:
                         logger.error(f"[CLI] Reply error: {e}")
@@ -422,8 +422,11 @@ async def on_message(message: discord.Message):
         extras.append(f"[Autocollant: {sticker.name}]")
     if extras:
         cli_content = (cli_content + " " if cli_content else "") + " ".join(extras)
+    ref_id = ""
+    if message.reference and isinstance(message.reference.resolved, discord.Message):
+        ref_id = str(message.reference.resolved.id)
     asyncio.create_task(broadcast_to_cli(
-        f"MSG|{message.channel.id}|{channel_name}|{message.author.display_name}|{message.id}|{cli_content}"
+        f"MSG|{message.channel.id}|{channel_name}|{message.author.display_name}|{message.id}|{ref_id}|{cli_content}"
     ))
     for att in message.attachments:
         if (att.content_type or "").startswith("image/"):
@@ -538,7 +541,7 @@ async def on_message(message: discord.Message):
     sent = await message.reply(response_content)
     channel_name = getattr(message.channel, "name", "dm")
     asyncio.create_task(broadcast_to_cli(
-        f"MSG|{sent.channel.id}|{channel_name}|{bot.user.display_name}|{sent.id}|{response_content}"
+        f"MSG|{sent.channel.id}|{channel_name}|{bot.user.display_name}|{sent.id}|{message.id}|{response_content}"
     ))
 
 
