@@ -440,13 +440,12 @@ async def on_message(message: discord.Message):
                 ))
 
     guild_id = message.guild.id if message.guild else 0
+    will_reply = (bot.user in message.mentions) or (not bot_muted and random.randint(1, 10) == 1)
 
-    # Auto-reaction (30% chance, sauf si bot réduit au silence)
-    if not bot_muted and message.content and random.randint(1, 10) <= 3:
+    if not will_reply and message.content and random.randint(1, 10) <= 3:
         asyncio.create_task(_auto_react(message, get_system_prompt(guild_id)))
 
-    # Respond only if mentioned or if random chance (10%) or if bot_muted is True
-    if (bot.user not in message.mentions) and ((random.randint(1, 10) > 1) or bot_muted):
+    if not will_reply:
         return
 
     system_prompt = get_system_prompt(guild_id)
