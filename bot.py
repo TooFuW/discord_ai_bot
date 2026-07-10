@@ -101,7 +101,7 @@ async def handle_cli_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                         channel = bot.get_channel(int(channel_id_str))
                         if channel:
                             has_everyone = "@everyone" in content or "@here" in content
-                            await channel.send(
+                            sent = await channel.send(
                                 content,
                                 allowed_mentions=discord.AllowedMentions(
                                     everyone=has_everyone, users=True, roles=True
@@ -109,6 +109,9 @@ async def handle_cli_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                             )
                             add_to_history(int(channel_id_str), "assistant", content)
                             logger.info(f"[CLI] Sent to #{channel.name}: {content[:60]}")
+                            asyncio.create_task(broadcast_to_cli(
+                                f"MSG|{channel.id}|{channel.name}|{bot.user.display_name}|{sent.id}|{content}"
+                            ))
                     except Exception as e:
                         logger.error(f"[CLI] Send error: {e}")
             elif cmd.startswith("CMD|"):
@@ -160,7 +163,7 @@ async def handle_cli_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                             if msg is None:
                                 msg = await channel.fetch_message(int(message_id_str))
                             has_everyone = "@everyone" in content or "@here" in content
-                            await msg.reply(
+                            sent_reply = await msg.reply(
                                 content,
                                 allowed_mentions=discord.AllowedMentions(
                                     everyone=has_everyone, users=True, roles=True
@@ -168,6 +171,9 @@ async def handle_cli_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                             )
                             add_to_history(int(channel_id_str), "assistant", content)
                             logger.info(f"[CLI] Replied to {message_id_str} in #{channel.name}: {content[:60]}")
+                            asyncio.create_task(broadcast_to_cli(
+                                f"MSG|{channel.id}|{channel.name}|{bot.user.display_name}|{sent_reply.id}|{content}"
+                            ))
                     except Exception as e:
                         logger.error(f"[CLI] Reply error: {e}")
                         writer.write(f"REPLY|[Erreur] {e}\n".encode())
