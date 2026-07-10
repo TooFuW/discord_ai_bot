@@ -425,6 +425,19 @@ async def on_message(message: discord.Message):
     asyncio.create_task(broadcast_to_cli(
         f"MSG|{message.channel.id}|{channel_name}|{message.author.display_name}|{message.id}|{cli_content}"
     ))
+    for att in message.attachments:
+        if (att.content_type or "").startswith("image/"):
+            asyncio.create_task(broadcast_to_cli(
+                f"IMAGE|{message.channel.id}|{message.id}|{att.url}"
+            ))
+    for embed in message.embeds:
+        if embed.type in ("gifv", "image"):
+            media = embed.image or embed.thumbnail
+            img_url = media.proxy_url if media else None
+            if img_url:
+                asyncio.create_task(broadcast_to_cli(
+                    f"IMAGE|{message.channel.id}|{message.id}|{img_url}"
+                ))
 
     guild_id = message.guild.id if message.guild else 0
 
@@ -536,6 +549,20 @@ async def on_presence_update(before: discord.Member, after: discord.Member):
         asyncio.create_task(broadcast_to_cli(
             f"PRESENCE|{after.id}|{str(after.status)}"
         ))
+
+
+@bot.event
+async def on_message_edit(before: discord.Message, after: discord.Message):
+    if after.author.bot:
+        return
+    for embed in after.embeds:
+        if embed.type in ("gifv", "image"):
+            media = embed.image or embed.thumbnail
+            img_url = media.proxy_url if media else None
+            if img_url:
+                asyncio.create_task(broadcast_to_cli(
+                    f"IMAGE|{after.channel.id}|{after.id}|{img_url}"
+                ))
 
 
 @bot.event

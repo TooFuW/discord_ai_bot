@@ -6,6 +6,11 @@ import threading
 import readline
 import os
 import re
+import subprocess
+import tempfile
+import shutil
+import urllib.request
+import urllib.error
 try:
     import emoji as _emoji_lib
     def _resolve_emoji_shortcode(text: str) -> str:
@@ -20,6 +25,13 @@ except ImportError:
         return text
 
 SOCKET_PATH = "/tmp/knapikette.sock"
+IMAGE_URL_RE = re.compile(
+    r'https?://(?:\S+?\.(?:gif|png|jpe?g|webp)(?:[?#]\S*)?'
+    r'|(?:[\w.-]+\.)?kiply\.com/gifs/\S+'
+    r'|media\.giphy\.com/media/\S+/giphy\.gif\S*'
+    r'|c\.tenor\.com/\S+\.gif\S*)',
+    re.IGNORECASE
+)
 
 current_channel_id = None
 current_channel_name = None
@@ -34,6 +46,8 @@ msg_log: list[tuple[int, str, str, str, str]] = []  # (message_id, cid, cname, a
 msg_id_to_info: dict[int, tuple[int, str, str]] = {}  # message_id -> (counter, author, content)
 msg_log_offset: int = 0
 MAX_MSG_LOG = 500
+show_images: bool = False
+image_buffer: list[str] = []
 
 STATUS_ICON = {
     "online":  "\033[1;32m●\033[0m",
@@ -69,6 +83,39 @@ def resolve_mentions(text: str) -> str:
                     return f"<@{mid}>"
         return m.group(0)
     return re.sub(r"@(\S+)", replace, text)
+
+
+def render_image(url: str):
+    if shutil.which("chafa") is None:
+        safe_print("\033[1;33m[chafa non installé — installe-le avec : sudo apt install chafa]\033[0m")
+        return
+    tmp_path = None
+    try:
+        cols = shutil.get_terminal_size((80, 24)).columns
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            tmp_path = f.name
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            with open(tmp_path, "wb") as f:
+                f.write(resp.read(5 * 1024 * 1024))
+        result = subprocess.run(
+            ["chafa", "--size", f"{cols}x20", tmp_path],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout:
+            safe_print(result.stdout.rstrip("\n"))
+        elif result.stderr:
+            safe_print(f"\033[2m[chafa : {result.stderr.strip()}]\033[0m")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            safe_print(f"\033[2m[Image 404 : lien expiré ou inaccessible]\033[0m")
+        else:
+            safe_print(f"\033[2m[Image non affichable : HTTP {e.code}]\033[0m")
+    except Exception as e:
+        safe_print(f"\033[2m[Image non affichable : {e}]\033[0m")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def format_message(channel_name: str, channel_id: str, author: str, content: str, counter: int) -> str:
@@ -145,6 +192,17 @@ def receiver(sock: socket.socket):
                         else:
                             counter = 0
                     safe_print(format_message(cname, cid, author, content, counter))
+                    for img_url in IMAGE_URL_RE.findall(content):
+                        image_buffer.append(img_url)
+                        if show_images:
+                            threading.Thread(target=render_image, args=(img_url,), daemon=True).start()
+            elif text.startswith("IMAGE|"):
+                parts = text.split("|", 3)
+                if len(parts) == 4:
+                    _, cid, mid_str, url = parts
+                    image_buffer.append(url)
+                    if show_images:
+                        threading.Thread(target=render_image, args=(url,), daemon=True).start()
             elif text.startswith("REACTION_ADD|"):
                 parts = text.split("|", 5)
                 if len(parts) >= 5:
@@ -194,7 +252,7 @@ def receiver(sock: socket.socket):
 
 def handle_command(line: str, sock: socket.socket):
     """Parse a /command and send CMD| to the bot."""
-    global current_channel_id, current_channel_name, current_guild_id
+    global current_channel_id, current_channel_name, current_guild_id, show_images
 
     parts = line[1:].split(" ", 1)
     command = parts[0].lower()
@@ -245,6 +303,7 @@ def handle_command(line: str, sock: socket.socket):
             "  /use_personality <nom>  — changer de personnalité\n"
             "  /reply <N> <message>    — répondre au message [N]\n"
             "  /react <N> <emoji>      — réagir au message [N] (ex: /react 3 :thumbsup: ou :rofl:)\n"
+            "  /img                    — activer/désactiver l'affichage des images (désactivé par défaut)\n"
             "\033[1mCommandes locales :\033[0m\n"
             "  /channel <nom>          — changer de salon actif\n"
             "  /channels               — lister les salons connus\n"
@@ -290,6 +349,34 @@ def handle_command(line: str, sock: socket.socket):
                 status = statuses.get(mid, "offline")
                 icon = STATUS_ICON.get(status, STATUS_ICON["offline"])
                 safe_print(f"  {icon} \033[1;35m{display}\033[0m (@{username})  \033[2m{status}\033[0m")
+        return
+
+    if command == "img":
+        show_images = not show_images
+        if show_images:
+            imgs = list(image_buffer)
+            if imgs:
+                def _render_all(urls):
+                    for u in urls:
+                        render_image(u)
+                threading.Thread(target=_render_all, args=(imgs,), daemon=True).start()
+            state = "\033[1;32mactivé\033[0m"
+        else:
+            with state_lock:
+                log_copy = list(msg_log)
+                offset = msg_log_offset
+            lines = [
+                format_message(m_cname, m_cid, author, content, i + 1 + offset)
+                for i, (mid, m_cid, m_cname, author, content) in enumerate(log_copy)
+            ]
+            with output_lock:
+                buf = readline.get_line_buffer()
+                prompt = get_prompt()
+                combined = "\n".join(lines)
+                sys.stdout.write(f"\033[2J\033[H{combined}\n{prompt}{buf}")
+                sys.stdout.flush()
+            state = "\033[2mdésactivé\033[0m"
+        safe_print(f"[Affichage des images {state}]")
         return
 
     if command in ("quit", "exit"):
