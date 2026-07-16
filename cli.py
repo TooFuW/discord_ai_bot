@@ -11,10 +11,17 @@ import tempfile
 import shutil
 import urllib.request
 import urllib.error
+# Alias Discord dont le nom differe de celui de la lib emoji
+_DISCORD_EMOJI_ALIASES = {
+    ":wilted_rose:": "🥀",
+}
+
 try:
     import emoji as _emoji_lib
     def _resolve_emoji_shortcode(text: str) -> str:
         if text.startswith(':') and text.endswith(':') and len(text) > 2:
+            if text in _DISCORD_EMOJI_ALIASES:
+                return _DISCORD_EMOJI_ALIASES[text]
             converted = _emoji_lib.emojize(text, language='alias')
             if converted == text:
                 converted = _emoji_lib.emojize(text)
@@ -22,7 +29,7 @@ try:
         return text
 except ImportError:
     def _resolve_emoji_shortcode(text: str) -> str:
-        return text
+        return _DISCORD_EMOJI_ALIASES.get(text, text)
 
 SOCKET_PATH = "/tmp/knapikette.sock"
 IMAGE_URL_RE = re.compile(
