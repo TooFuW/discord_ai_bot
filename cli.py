@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 import shutil
+import textwrap
 import urllib.request
 import urllib.error
 # Alias Discord dont le nom differe de celui de la lib emoji
@@ -133,6 +134,19 @@ def format_message(channel_name: str, channel_id: str, author: str, content: str
     return f"{idx}{ch}{tag} \033[1;35m{author}\033[0m: {content}"
 
 
+def format_embed(title: str, url: str, description: str) -> str:
+    bar = "\033[1;34m▎\033[0m"
+    lines = []
+    if title:
+        lines.append(f"\033[1;34m{title}\033[0m")
+    if description:
+        width = max(shutil.get_terminal_size((80, 24)).columns - 4, 20)
+        lines.extend(textwrap.wrap(description, width=width))
+    if url:
+        lines.append(f"\033[4;34m{url}\033[0m")
+    return "\n".join(f"{bar} {l}" for l in lines)
+
+
 def receiver(sock: socket.socket):
     global current_channel_id, current_channel_name, current_guild_id, msg_log_offset
     buf = b""
@@ -213,6 +227,12 @@ def receiver(sock: socket.socket):
                         image_buffer.append(img_url)
                         if show_images:
                             threading.Thread(target=render_image, args=(img_url,), daemon=True).start()
+            elif text.startswith("EMBED|"):
+                parts = text.split("|", 5)
+                if len(parts) == 6:
+                    _, cid, mid_str, title, url, description = parts
+                    if title or description or url:
+                        safe_print(format_embed(title, url, description))
             elif text.startswith("IMAGE|"):
                 parts = text.split("|", 3)
                 if len(parts) == 4:

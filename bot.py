@@ -209,6 +209,12 @@ async def start_cli_server():
     async with server:
         await server.serve_forever()
 
+def _sanitize_embed_field(text: str, max_len: int = 400) -> str:
+    text = text.replace("\n", " ⏎ ").replace("|", "│")
+    if len(text) > max_len:
+        text = text[:max_len].rstrip() + "…"
+    return text
+
 async def broadcast_to_cli(msg: str):
     if not cli_clients:
         return
@@ -434,13 +440,18 @@ async def on_message(message: discord.Message):
                 f"IMAGE|{message.channel.id}|{message.id}|{att.url}"
             ))
     for embed in message.embeds:
-        if embed.type in ("gifv", "image"):
-            media = embed.image or embed.thumbnail
-            img_url = media.proxy_url if media else None
-            if img_url:
-                asyncio.create_task(broadcast_to_cli(
-                    f"IMAGE|{message.channel.id}|{message.id}|{img_url}"
-                ))
+        if embed.title or embed.description or embed.url:
+            title = _sanitize_embed_field(embed.title or "")
+            description = _sanitize_embed_field(embed.description or "")
+            asyncio.create_task(broadcast_to_cli(
+                f"EMBED|{message.channel.id}|{message.id}|{title}|{embed.url or ''}|{description}"
+            ))
+        media = embed.image or embed.thumbnail
+        img_url = media.proxy_url if media else None
+        if img_url:
+            asyncio.create_task(broadcast_to_cli(
+                f"IMAGE|{message.channel.id}|{message.id}|{img_url}"
+            ))
 
     guild_id = message.guild.id if message.guild else 0
     will_reply = (bot.user in message.mentions) or (not bot_muted and random.randint(1, 10) == 1)
@@ -558,13 +569,18 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     if after.author.bot:
         return
     for embed in after.embeds:
-        if embed.type in ("gifv", "image"):
-            media = embed.image or embed.thumbnail
-            img_url = media.proxy_url if media else None
-            if img_url:
-                asyncio.create_task(broadcast_to_cli(
-                    f"IMAGE|{after.channel.id}|{after.id}|{img_url}"
-                ))
+        if embed.title or embed.description or embed.url:
+            title = _sanitize_embed_field(embed.title or "")
+            description = _sanitize_embed_field(embed.description or "")
+            asyncio.create_task(broadcast_to_cli(
+                f"EMBED|{after.channel.id}|{after.id}|{title}|{embed.url or ''}|{description}"
+            ))
+        media = embed.image or embed.thumbnail
+        img_url = media.proxy_url if media else None
+        if img_url:
+            asyncio.create_task(broadcast_to_cli(
+                f"IMAGE|{after.channel.id}|{after.id}|{img_url}"
+            ))
 
 
 @bot.event
