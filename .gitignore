@@ -3,3 +3,5 @@
 personalities.json
 active_personalities.json
 send.py
+__pycache__/
+*.pyc
