@@ -353,10 +353,10 @@ async def query_groq(messages: list) -> str:
             response = await _query_groq_model(session, GROQ_MODEL, messages)
             logger.info(f"Groq response received ({len(response)} chars)")
             return response
-        except RateLimitError:
+        except (RateLimitError, ValueError) as e:
             if not GROQ_FALLBACK_MODEL:
                 raise
-            logger.warning(f"Rate limit on {GROQ_MODEL}, falling back to {GROQ_FALLBACK_MODEL}")
+            logger.warning(f"{GROQ_MODEL} failed ({e}), falling back to {GROQ_FALLBACK_MODEL}")
             response = await _query_groq_model(session, GROQ_FALLBACK_MODEL, messages)
             logger.info(f"Groq fallback response received ({len(response)} chars)")
             return response
