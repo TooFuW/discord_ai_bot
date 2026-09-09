@@ -519,6 +519,11 @@ async def _fetch_og(session: aiohttp.ClientSession, url: str) -> str | None:
     parts = [part for part in (title, description) if part]
     return " — ".join(parts) if parts else None
 
+IMAGE_URL_RE = re.compile(r"\.(gif|png|jpe?g|webp)$", re.IGNORECASE)
+
+def _looks_like_image_url(url: str) -> bool:
+    return bool(IMAGE_URL_RE.search(urlparse(url).path))
+
 async def fetch_link_preview(url: str) -> str | None:
     host = urlparse(url).netloc.lower().removeprefix("www.")
     try:
@@ -561,12 +566,42 @@ async def _gather_extras(message: discord.Message, will_reply: bool) -> list[str
         extras.append(f"[Autocollant : {sticker.name}]")
 
     urls = extract_urls(message.content)[:MAX_LINKS_PER_MESSAGE]
-    if urls:
-        previews = await asyncio.gather(*(fetch_link_preview(url) for url in urls))
-        for url, preview in zip(urls, previews):
+    # custom Discord GIFs land as a plain cdn.discordapp.com URL in the message text, not as an attachment
+    image_urls = [url for url in urls if _looks_like_image_url(url)]
+    link_urls = [url for url in urls if url not in image_urls]
+
+    for url in image_urls:
+        description = None
+        if will_reply:
+            try:
+                description = await describe_image(url)
+            except Exception as e:
+                logger.warning(f"[Vision] Failed for {url}: {e}")
+        extras.append(f"[Image : {description or urlparse(url).path.rsplit('/', 1)[-1]}]")
+
+    if link_urls:
+        previews = await asyncio.gather(*(fetch_link_preview(url) for url in link_urls))
+        for url, preview in zip(link_urls, previews):
             if preview:
                 extras.append(f'[Lien "{url}": {preview}]')
     return extras
+
+async def _describe_ref_image(ref: discord.Message) -> str | None:
+    for att in ref.attachments:
+        if (att.content_type or "").startswith("image/"):
+            try:
+                return await describe_image(att.url)
+            except Exception as e:
+                logger.warning(f"[Vision] Failed for ref attachment {att.filename}: {e}")
+            return None
+    for url in extract_urls(ref.content)[:1]:
+        if _looks_like_image_url(url):
+            try:
+                return await describe_image(url)
+            except Exception as e:
+                logger.warning(f"[Vision] Failed for ref image url: {e}")
+            return None
+    return None
 
 
 # History
@@ -606,12 +641,17 @@ async def on_message(message: discord.Message):
     guild_id = message.guild.id if message.guild else 0
     will_reply = (bot.user in message.mentions) or (not bot_muted and random.randint(1, 10) == 1)
 
+    ref = message.reference.resolved if message.reference else None
+    ref = ref if isinstance(ref, discord.Message) else None
+
     # Vision calls can take a while — show typing right away so a reply with an image doesn't look frozen
     if will_reply:
         async with message.channel.typing():
             extras = await _gather_extras(message, will_reply)
+            ref_image = await _describe_ref_image(ref) if ref else None
     else:
         extras = await _gather_extras(message, will_reply)
+        ref_image = None
 
     content_with_extras = message.content
     if extras:
@@ -619,19 +659,19 @@ async def on_message(message: discord.Message):
 
     # Save the message to the history
     author_tag = f"{message.author.display_name} (@{message.author.name})"
-    if message.reference and isinstance(message.reference.resolved, discord.Message):
-        ref = message.reference.resolved
+    if ref:
         ref_tag = f"{ref.author.display_name} (@{ref.author.name})"
-        entry = f'{author_tag} [en réponse à {ref_tag}: "{ref.content[:150]}"]: {content_with_extras}'
+        ref_content = ref.content[:150]
+        if ref_image:
+            ref_content = (ref_content + " " if ref_content else "") + f"[Image : {ref_image}]"
+        entry = f'{author_tag} [en réponse à {ref_tag}: "{ref_content}"]: {content_with_extras}'
     else:
         entry = f"{author_tag}: {content_with_extras}"
     add_to_history(message.channel.id, "user", entry)
     channel_name = getattr(message.channel, "name", "dm")
     cache_message(message)
     cli_content = _sanitize_embed_field(content_with_extras, max_len=800) if extras else content_with_extras
-    ref_id = ""
-    if message.reference and isinstance(message.reference.resolved, discord.Message):
-        ref_id = str(message.reference.resolved.id)
+    ref_id = str(ref.id) if ref else ""
     asyncio.create_task(broadcast_to_cli(
         f"MSG|{message.channel.id}|{channel_name}|{message.author.display_name}|{message.id}|{ref_id}|{cli_content}"
     ))
