@@ -2,6 +2,7 @@
 .env
 personalities.json
 active_personalities.json
+prompts.json
 send.py
 __pycache__/
 *.pyc
