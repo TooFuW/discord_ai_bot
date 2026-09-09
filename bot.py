@@ -32,6 +32,7 @@ OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL")
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL")
 OLLAMA_URL = "http://localhost:11434/api/chat"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+DISCORD_API_URL = "https://discord.com/api/v10"
 VISION_API_URL = os.getenv("VISION_API_URL") or GROQ_URL
 VISION_API_KEY = os.getenv("VISION_API_KEY") or GROQ_API_KEY
 PROMPTS_FILE = Path(__file__).parent / "prompts.json"
@@ -477,6 +478,28 @@ async def describe_image(url: str) -> str | None:
             logger.warning(f"[Vision] API failed: {e!r}")
     return None
 
+DISCORD_CDN_HOSTS = {"cdn.discordapp.com", "media.discordapp.net"}
+
+async def _refresh_discord_cdn_url(url: str) -> str:
+    # bare cdn.discordapp.com URLs (e.g. a reused/favorited GIF pasted as plain text) 404 without a signed ex/is/hm query string
+    if urlparse(url).netloc.lower() not in DISCORD_CDN_HOSTS:
+        return url
+    headers = {"Authorization": f"Bot {TOKEN}", "Content-Type": "application/json"}
+    try:
+        async with aiohttp.ClientSession(timeout=LINK_TIMEOUT) as session:
+            async with session.post(
+                f"{DISCORD_API_URL}/attachments/refresh-urls",
+                json={"attachment_urls": [url]},
+                headers=headers,
+            ) as resp:
+                if resp.status != 200:
+                    return url
+                refreshed = (await resp.json()).get("refreshed_urls", [])
+                return refreshed[0]["refreshed"] if refreshed else url
+    except Exception as e:
+        logger.warning(f"[Vision] Could not refresh Discord CDN URL: {e!r}")
+        return url
+
 
 # Link previews (Twitter/X, Instagram, other sites)
 
@@ -574,7 +597,8 @@ async def _gather_extras(message: discord.Message, will_reply: bool) -> list[str
         description = None
         if will_reply:
             try:
-                description = await describe_image(url)
+                fetch_url = await _refresh_discord_cdn_url(url)
+                description = await describe_image(fetch_url)
             except Exception as e:
                 logger.warning(f"[Vision] Failed for {url}: {e}")
         extras.append(f"[Image : {description or urlparse(url).path.rsplit('/', 1)[-1]}]")
@@ -597,7 +621,8 @@ async def _describe_ref_image(ref: discord.Message) -> str | None:
     for url in extract_urls(ref.content)[:1]:
         if _looks_like_image_url(url):
             try:
-                return await describe_image(url)
+                fetch_url = await _refresh_discord_cdn_url(url)
+                return await describe_image(fetch_url)
             except Exception as e:
                 logger.warning(f"[Vision] Failed for ref image url: {e}")
             return None
